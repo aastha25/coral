@@ -19,7 +19,6 @@ import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.*;
 import org.apache.calcite.rel.rel2sql.RelToSqlConverter;
 import org.apache.calcite.rel.type.RelDataType;
-import org.apache.calcite.rel.type.RelDataTypeField;
 import org.apache.calcite.rel.type.RelDataTypeFieldImpl;
 import org.apache.calcite.rel.type.RelRecordType;
 import org.apache.calcite.rex.RexCall;
@@ -32,7 +31,6 @@ import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.calcite.sql.parser.SqlParserPos;
 import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.calcite.sql.validate.SqlValidatorUtil;
-import org.apache.calcite.util.Util;
 
 import com.linkedin.coral.com.google.common.collect.ImmutableList;
 import com.linkedin.coral.common.functions.FunctionFieldReferenceOperator;
@@ -122,7 +120,35 @@ public class RelToTrinoConverter extends RelToSqlConverter {
     }
 
     builder.setSelect(new SqlNodeList(selectList, POS));
-    return builder.result();
+    Result res = builder.result();
+
+    // For SQLs definitions, such as:
+    // SELECT ARRAY['a1', 'a2'] AS "a" FROM (VALUES  (0)) AS "t" ("ZERO")
+    // Child RelNode's aliases are misrepresented by default and table alias 't' is assigned RelDataType 'RecordType(INTEGER ZERO)'
+    // RelDataType associated with alias 't' is updated based on the Project RelNode's row type
+    if (res.aliases.size() == 1) {
+      String key = res.aliases.keySet().iterator().next();
+      RelDataType value = res.aliases.get(key);
+
+      // If value of type: RecordType(INTEGER ZERO)
+      if (value.isStruct() && value.getFieldCount() == 1
+          && value.getFieldList().get(0).getKey().equalsIgnoreCase("ZERO")
+          && value.getFieldList().get(0).getType().getSqlTypeName() == SqlTypeName.INTEGER) {
+
+        // Use the generated alias, if available, and current RelNode's rowtype to reflect the child expressions
+        // check test HiveToTrinoConverterTest#testLateralViewArray
+        String newKey = res.neededAlias == null ? key : res.neededAlias;
+
+        Map<String, RelDataType> updatedAliases =
+            com.linkedin.coral.com.google.common.collect.ImmutableMap.of(newKey, e.getRowType());
+
+        ((SqlSelect) res.node).setFrom(((SqlBasicCall) ((SqlSelect) res.node).getFrom()).operand(0));
+
+        return new Result(res.node, res.clauses, res.neededAlias, res.neededType, updatedAliases);
+      }
+    }
+
+    return res;
   }
 
   @Override
@@ -235,7 +261,13 @@ public class RelToTrinoConverter extends RelToSqlConverter {
       qualifiedName = qualifiedName.subList(qualifiedName.size() - 2, qualifiedName.size()); // take last two entries
     }
     final SqlIdentifier identifier = new SqlIdentifier(qualifiedName, SqlParserPos.ZERO);
-    return result(identifier, ImmutableList.of(Clause.FROM), e, null);
+
+    String aliasName = identifier.names.size() > 1 ? identifier.names.get(1) : identifier.names.get(0);
+    String updatedAlias = SqlValidatorUtil.uniquify(aliasName, aliasSet, SqlValidatorUtil.EXPR_SUGGESTER);
+    SqlNode updatedNode = SqlStdOperatorTable.AS.createCall(POS, identifier, new SqlIdentifier(updatedAlias, POS));
+
+    return new Result(updatedNode, ImmutableList.of(Clause.FROM), null, e.getRowType(),
+        com.linkedin.coral.com.google.common.collect.ImmutableMap.of(updatedAlias, e.getRowType()));
   }
 
   /**
@@ -262,7 +294,7 @@ public class RelToTrinoConverter extends RelToSqlConverter {
   }
 
   public Result visit(Correlate e) {
-    final Result leftResult = visitChild(0, e.getLeft()).resetAlias(e.getCorrelVariable(), e.getLeft().getRowType());
+    final Result leftResult = visitChild(0, e.getLeft());
     parseCorrelTable(e, leftResult);
     final Result rightResult = visitChild(1, e.getRight());
     SqlNode rightLateral = rightResult.node;
@@ -316,41 +348,6 @@ public class RelToTrinoConverter extends RelToSqlConverter {
           }
         }
         return super.toSql(program, rex);
-      }
-
-      @Override
-      public SqlNode field(int ordinal) {
-        for (Map.Entry<String, RelDataType> alias : aliases.entrySet()) {
-          final List<RelDataTypeField> fields = alias.getValue().getFieldList();
-          if (ordinal < fields.size()) {
-            RelDataTypeField field = fields.get(ordinal);
-            final SqlNode mappedSqlNode = ordinalMap.get(field.getName().toLowerCase(Locale.ROOT));
-            if (mappedSqlNode != null) {
-              return ensureAliasedNode(alias.getKey(), mappedSqlNode);
-            }
-            return new SqlIdentifier(
-                !qualified ? ImmutableList.of(field.getName()) : ImmutableList.of(alias.getKey(), field.getName()),
-                POS);
-          }
-          ordinal -= fields.size();
-        }
-        throw new AssertionError("field ordinal " + ordinal + " out of range " + aliases);
-      }
-
-      protected SqlNode ensureAliasedNode(String alias, SqlNode id) {
-        if (!(id instanceof SqlIdentifier)) {
-          return id;
-        }
-        ImmutableList<String> names = ((SqlIdentifier) id).names;
-        if (names.size() > 1) {
-          return id;
-        }
-        return new SqlIdentifier(ImmutableList.of(alias, Util.last(names)), POS);
-      }
-
-      private RexNode stripCastFromString(RexNode node) {
-        // DO NOT strip
-        return node;
       }
     };
   }

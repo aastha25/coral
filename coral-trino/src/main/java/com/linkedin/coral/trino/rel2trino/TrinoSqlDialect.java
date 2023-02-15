@@ -75,6 +75,15 @@ public class TrinoSqlDialect extends SqlDialect {
     return true;
   }
 
+  /**
+   * This override qualifies each projected field with the corresponding table alias.
+   * @return bool
+   */
+  @Override
+  public boolean hasImplicitTableAlias() {
+    return false;
+  }
+
   private void unparseMapValueConstructor(SqlWriter writer, SqlCall call, int leftPrec, int rightPrec) {
     writer.keyword(call.getOperator().getName()); // "MAP"
     final SqlWriter.Frame frame = writer.startList("(", ")"); // not "[" and "]"
