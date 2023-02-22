@@ -188,7 +188,11 @@ public class TestUtils {
     Hook.REL_BUILDER_SIMPLIFY.add(Hook.propertyJ(false));
   }
 
-  public static void initializeViews(HiveConf conf) throws HiveException, MetaException, IOException {
+  public static HiveToRelConverter getHiveToRelConverter() {
+    return new HiveToRelConverter(hiveMetastoreClient);
+  }
+
+  public static void initializeTablesAndViews(HiveConf conf) throws HiveException, MetaException, IOException {
     String testDir = conf.get(CORAL_TRINO_TEST_DIR);
     System.out.println("Test Workspace: " + testDir);
     FileUtils.deleteDirectory(new File(testDir));
@@ -366,6 +370,18 @@ public class TestUtils {
         + "SELECT a.some_id FROM test.duplicate_column_name_a a LEFT JOIN ( SELECT trim(some_id) AS SOME_ID FROM test.duplicate_column_name_b) b ON a.some_id = b.some_id WHERE a.some_id != ''");
 
     run(driver, "CREATE TABLE test.table_with_binary_column (b binary)");
+
+    // Tables used in RelToTrinoConverterTest
+    run(driver,
+        "CREATE TABLE IF NOT EXISTS test.tableOne(icol int, dcol double, scol string, tcol timestamp, acol array<string>)");
+
+    run(driver,
+        "CREATE TABLE IF NOT EXISTS test.tableTwo(ifield int, dfield double, sfield string, tfield timestamp, decfield decimal)");
+
+    run(driver, "CREATE TABLE IF NOT EXISTS test.tableThree(binaryfield binary, varbinaryfield binary)");
+
+    run(driver,
+        "CREATE TABLE IF NOT EXISTS test.tableFour(icol int, scol string, acol array<string>, mcol map<string, string>)");
   }
 
   public static RelNode convertView(String db, String view) {

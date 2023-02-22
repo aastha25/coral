@@ -69,7 +69,7 @@ subprojects {
     spotless {
       java {
         importOrder('java', 'javax', 'com', 'org', 'com.linkedin.coral', '\\#')
-        removeUnusedImports()
+        //        removeUnusedImports()
         eclipse().configFile("${rootDir}/gradle/spotless/codestyle-eclipse.xml")
         licenseHeaderFile file("${rootDir}/gradle/license/LICENSE_HEADER")
       }

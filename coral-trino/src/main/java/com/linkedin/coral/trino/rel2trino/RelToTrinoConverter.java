@@ -104,6 +104,51 @@ public class RelToTrinoConverter extends RelToSqlConverter {
   }
 
   @Override
+  public Result visit(Filter e) {
+
+    //    final RelNode input = e.getInput();
+    //    if (input instanceof Aggregate) {
+    //      final Aggregate aggregate = (Aggregate) input;
+    //      final boolean ignoreClauses = aggregate.getInput() instanceof Project;
+    //      final Result x = visitInput(e, 0, isAnon(), ignoreClauses,
+    //          ImmutableSet.of(Clause.HAVING));
+    //      parseCorrelTable(e, x);
+    //      final Builder builder = x.builder(e);
+    //      x.asSelect().setHaving(
+    //          SqlUtil.andExpressions(x.asSelect().getHaving(),
+    //              builder.context.toSql(null, e.getCondition())));
+    //      return builder.result();
+    //    } else {
+    //      final Result x = visitInput(e, 0, Clause.WHERE);
+    //      parseCorrelTable(e, x);
+    //      final Builder builder = x.builder(e);
+    //      builder.setWhere(builder.context.toSql(null, e.getCondition()));
+    //      return builder.result();
+    //    }
+    //
+
+    final RelNode input = e.getInput();
+    if (input instanceof Aggregate) {
+      return super.visit(e);
+    }
+
+    Result x = visitChild(0, input); // child Project
+    parseCorrelTable(e, x);
+    final Builder builder = x.builder(e, Clause.WHERE);
+    builder.setWhere(builder.context.toSql(null, e.getCondition()));
+
+    String originalAlias = x.neededAlias;
+
+    Result res = builder.result();
+
+    // consider checking of res.aliases.size() == 1
+    String newAlias = originalAlias == null ? res.neededAlias : originalAlias;
+
+    return new Result(res.node, res.clauses, null, e.getRowType(),
+        com.linkedin.coral.com.google.common.collect.ImmutableMap.of(newAlias, e.getRowType()));
+  }
+
+  @Override
   public Result visit(Project e) {
     e.getVariablesSet();
     Result x = visitChild(0, e.getInput());

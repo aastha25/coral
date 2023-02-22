@@ -5,7 +5,13 @@
  */
 package com.linkedin.coral.trino.rel2trino;
 
+import java.io.IOException;
+
+import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.tools.FrameworkConfig;
+import org.apache.hadoop.hive.conf.HiveConf;
+import org.apache.hadoop.hive.metastore.api.MetaException;
+import org.apache.hadoop.hive.ql.metadata.HiveException;
 import org.testng.annotations.BeforeTest;
 import org.testng.annotations.Test;
 
@@ -29,15 +35,14 @@ public class RelToTrinoConverterTest {
 
   static FrameworkConfig config;
   static final SqlParser trinoParser = new SqlParser();
-  static final String tableOne = TABLE_ONE.getTableName();
-  static final String tableTwo = TABLE_TWO.getTableName();
-  static final String tableThree = TABLE_THREE.getTableName();
-  static final String tableFour = TABLE_FOUR.getTableName();
+  private HiveConf hiveConf;
 
   @BeforeTest
-  public static void beforeTest() {
+  public void beforeTest() throws HiveException, MetaException, IOException {
     TestUtils.turnOffRelSimplification();
     config = TestUtils.createFrameworkConfig(TABLE_ONE, TABLE_TWO, TABLE_THREE, TABLE_FOUR);
+    hiveConf = TestUtils.loadResourceHiveConf();
+    TestUtils.initializeTablesAndViews(hiveConf);
   }
 
   private void testConversion(String inputSql, String expectedSql) {
@@ -58,24 +63,32 @@ public class RelToTrinoConverterTest {
 
   private String toTrinoSql(String sql) {
     RelToTrinoConverter converter = new RelToTrinoConverter();
-    return converter.convert(TestUtils.toRel(sql, config));
+    RelNode relNode = TestUtils.getHiveToRelConverter().convertSql(sql);
+    return converter.convert(relNode);
   }
 
-  @Test(enabled = false)
+  @Test
   public void testSimpleSelect() {
-    String sql = String
-        .format("SELECT scol, sum(icol) as s from %s where dcol > 3.0 AND icol < 5 group by scol having sum(icol) > 10"
-            + " order by scol ASC", tableOne);
+    String sql =
+        "SELECT scol, sum(icol) as s from test.tableOne where dcol > 3.0 AND icol < 5 group by scol having sum(icol) > 10"
+            + " order by scol ASC";
 
-    String expectedSql = formatSql("SELECT scol as SCOL, SUM(icol) AS s FROM " + tableOne
-        + " where dcol > 3.0 and icol < 5\n" + "group by scol\n" + "having sum(icol) > 10\n" + "order by scol");
+    // SELECT "t"."scol" AS "scol", SUM("t"."icol") AS "s"
+    //FROM "test"."tableone" AS "tableone"
+    //WHERE "tableone"."dcol" > 3.0 AND "tableone"."icol" < 5
+    //GROUP BY "t"."scol"
+    //HAVING SUM("t"."icol") > 10
+    //ORDER BY "t"."scol" NULLS FIRST
+    String expectedSql = "SELECT \"scol\", SUM(\"icol\") AS \"s\"\n" + "FROM \"test\".\"tableone\"\n"
+        + "WHERE \"dcol\" > 3.0 AND \"icol\" < 5\n" + "GROUP BY \"scol\"\n" + "HAVING SUM(\"icol\") > 10\n"
+        + "ORDER BY \"scol\" NULLS FIRST";
     testConversion(sql, expectedSql);
   }
 
   @Test(enabled = false)
   public void testMapStructAccess() {
-    String sql = String.format(
-        "SELECT mcol[scol].IFIELD as mapStructAccess, mcol[scol].SFIELD as sField from %s where icol < 5", tableFour);
+    String sql =
+        "SELECT mcol[scol].IFIELD as mapStructAccess, mcol[scol].SFIELD as sField from test.tableFour where icol < 5";
 
     String expectedSql =
         "SELECT element_at(\"mcol\", \"scol\").\"IFIELD\" AS \"MAPSTRUCTACCESS\", element_at(\"mcol\", \"scol\").\"SFIELD\" AS \"SFIELD\"\n"
@@ -84,12 +97,12 @@ public class RelToTrinoConverterTest {
   }
 
   // different data types
-  @Test(enabled = false)
+  @Test
   public void testTypes() {
     // Array
     {
-      String sql = "select acol[10] from tableOne";
-      String expected = "SELECT element_at(\"acol\", 10)\nFROM \"tableOne\"";
+      String sql = "select acol[10] from test.tableOne";
+      String expected = "SELECT element_at(\"tableone\".\"acol\", 11)\n" + "FROM \"test\".\"tableone\" AS \"tableone\"";
       testConversion(sql, expected);
     }
     {
@@ -100,12 +113,13 @@ public class RelToTrinoConverterTest {
     // date and timestamp
     {
       String sql = "SELECT date '2017-10-21'";
-      String expected = "SELECT DATE '2017-10-21'\nFROM (VALUES  (0)) AS \"t\" (\"ZERO\")";
+      String expected = "SELECT '2017-10-21'\nFROM (VALUES (0)) AS \"t\" (\"ZERO\")";
       testConversion(sql, expected);
     }
     {
-      String sql = "SELECT time '13:45:21.011'";
-      String expected = "SELECT TIME '13:45:21.011'\nFROM (VALUES  (0)) AS \"t\" (\"ZERO\")";
+      String sql = "SELECT date_format('13:45:21.011', 'HH:mm:ss.SSS') as formatted_time";
+      String expected =
+          "SELECT \"date_format\"('13:45:21.011', 'HH:mm:ss.SSS') AS \"formatted_time\"\nFROM (VALUES  (0)) AS \"t\" (\"ZERO\")";
       testConversion(sql, expected);
     }
     // TODO: Test disabled: Calcite parser does not support time with timezone. Check Hive
@@ -134,7 +148,7 @@ public class RelToTrinoConverterTest {
     testConversion(sql, expected);
   }
 
-  @Test(enabled = false)
+  @Test
   public void testConstantExpressions() {
     {
       String sql = "SELECT 1";
@@ -165,101 +179,111 @@ public class RelToTrinoConverterTest {
 
   }
 
-  @Test(enabled = false)
+  @Test
   public void testExists() {
-    String sql = "SELECT icol from tableOne where exists (select ifield from tableTwo where dfield > 32.00)";
-    String expected =
-        quoteColumns("SELECT tableOne.icol AS ICOL\n" + "FROM tableOne\n" + "LEFT JOIN (SELECT MIN(TRUE) AS \"$f0\"\n"
-            + "FROM tableTwo\n" + "WHERE dfield > 32.00) AS \"t1\" ON TRUE\n" + "WHERE \"t1\".\"$f0\" IS NOT NULL");
+    String sql = "SELECT icol from test.tableOne where exists (select ifield from test.tableTwo where dfield > 32.00)";
+    String expected = "SELECT \"t1\".\"icol\" AS \"icol\"\n" + "FROM \"test\".\"tableone\" AS \"tableone\"\n"
+        + "LEFT JOIN (SELECT MIN(TRUE) AS \"$f0\"\n" + "FROM \"test\".\"tabletwo\" AS \"tabletwo\"\n"
+        + "WHERE \"tabletwo\".\"dfield\" > 32.00) AS \"t1\" ON TRUE\n" + "WHERE \"t1\".\"$f0\" IS NOT NULL";
     testConversion(sql, expected);
   }
 
-  @Test(enabled = false)
+  @Test
   public void testNotExists() {
-    String sql = "SELECT icol from tableOne where not exists (select ifield from tableTwo where dfield > 32.00)";
-    String expected =
-        quoteColumns("SELECT tableOne.icol AS ICOL\n" + "FROM tableOne\n" + "LEFT JOIN (SELECT MIN(TRUE) AS \"$f0\"\n"
-            + "FROM tableTwo\n" + "WHERE dfield > 32.00) AS \"t1\" ON TRUE\n" + "WHERE NOT \"t1\".\"$f0\" IS NOT NULL");
+    String sql =
+        "SELECT icol from test.tableOne where not exists (select ifield from test.tableTwo where dfield > 32.00)";
+    // SELECT "t2"."icol" AS "icol"
+    //FROM "test"."tableone" AS "tableone"
+    //LEFT JOIN (SELECT MIN(TRUE) AS "$f0"
+    //FROM "test"."tabletwo" AS "tabletwo"
+    //WHERE "tabletwo"."dfield" > 32.00) AS "t1" ON TRUE
+    //WHERE NOT "t1"."$f0" IS NOT NULL
+    String expected = "SELECT \"tableone\".\"icol\" AS \"icol\"\n" + "FROM \"test\".\"tableone\"\n"
+        + "LEFT JOIN (SELECT MIN(TRUE) AS \"$f0\"\n" + "FROM \"test\".\"tabletwo\"\n"
+        + "WHERE \"dfield\" > 32.00) AS \"t1\" ON TRUE\n" + "WHERE NOT \"t1\".\"$f0\" IS NOT NULL";
     testConversion(sql, expected);
   }
 
   // Sub query types
-  @Test(enabled = false)
+  @Test
   public void testInClause() {
-    String sql = "SELECT tcol, scol\n" + "FROM " + tableOne + " WHERE icol IN ( " + " SELECT ifield from " + tableTwo
-        + "   WHERE ifield < 10)";
+    String sql = "SELECT tcol, scol\n" + "FROM test.tableOne" + " WHERE icol IN ( "
+        + " SELECT ifield from test.tableTwo" + "   WHERE ifield < 10)";
 
-    String s = "select tableOne.tcol as tcol, tableOne.scol as scol\n" + "FROM " + tableOne + "\n"
-        + "INNER JOIN (select ifield as ifield\n" + "from " + tableTwo + "\n" + "where ifield < 10\n"
-        + "group by ifield) as \"t1\" on tableOne.icol = \"t1\".\"IFIELD\"";
-    String expectedSql = quoteColumns(upcaseKeywords(s));
+    // SELECT "tableone"."tcol" AS "tcol", "tableone"."scol" AS "scol"
+    //FROM "test"."tableone" AS "tableone"
+    //INNER JOIN (SELECT "t"."ifield" AS "ifield"
+    //FROM "test"."tabletwo" AS "tabletwo"
+    //WHERE "tabletwo"."ifield" < 10
+    //GROUP BY "t"."ifield") AS "t1" ON "tableone"."icol" = "t1"."ifield"
+
+    String expectedSql = "SELECT \"tableone\".\"tcol\" AS \"tcol\", \"tableone\".\"scol\" AS \"scol\"\n"
+        + "FROM \"test\".\"tableone\"\n" + "INNER JOIN (SELECT \"ifield\"\n" + "FROM \"test\".\"tabletwo\"\n"
+        + "WHERE \"ifield\" < 10\n" + "GROUP BY \"ifield\") AS \"t1\" ON \"tableone\".\"icol\" = \"t1\".\"ifield\"";
     testConversion(sql, expectedSql);
   }
 
   @Test(enabled = false)
   public void testNotIn() {
-    String sql = "SELECT tcol, scol\n" + "FROM " + tableOne + " WHERE icol NOT IN ( " + " SELECT ifield from "
-        + tableTwo + "   WHERE ifield < 10)";
+    String sql = "SELECT tcol, scol\n" + "FROM test.tableOne" + " WHERE icol NOT IN ( "
+        + " SELECT ifield from test.tableTwo" + "   WHERE ifield < 10)";
 
-    String s = "select tableOne.tcol as tcol, tableOne.scol as scol\n" + "FROM " + tableOne + "\n"
-        + "INNER JOIN (select ifield as ifield\n" + "from " + tableTwo + "\n" + "where ifield < 10\n"
+    String s = "select tableOne.tcol as tcol, tableOne.scol as scol\n" + "FROM test.tableOne" + "\n"
+        + "INNER JOIN (select ifield as ifield\n" + "from test.tableTwo" + "\n" + "where ifield < 10\n"
         + "group by ifield) as \"t1\" on tableOne.icol != \"t1\".\"IFIELD\"";
     String expectedSql = quoteColumns(upcaseKeywords(s));
     testConversion(sql, expectedSql);
   }
 
   @Test(enabled = false)
-  public void testExceptClause() {
-    String sql = "SELECT icol from " + tableOne + " EXCEPT (select ifield from " + tableTwo + ")";
-    String expected = formatSql("select icol as icol from tableOne except select ifield as ifield from tableTwo");
-    testConversion(sql, expected);
-  }
-
-  @Test(enabled = false)
   public void testScalarSubquery() {
-    String sql = "SELECT icol from tableOne where icol > (select sum(ifield) from tableTwo)";
+    String sql = "SELECT icol from test.tableOne where icol > (select sum(ifield) from tableTwo)";
     testConversion(sql, "");
   }
 
   @Test(enabled = false)
   public void testCorrelatedSubquery() {
     String sql =
-        "select dcol from tableOne where dcol > (select sum(dfield) from tableTwo where dfield < tableOne.icol)";
+        "select dcol from test.tableOne where dcol > (select sum(dfield) from test.tableTwo where dfield < tableOne.icol)";
     testConversion(sql, "");
   }
 
-  @Test(enabled = false)
+  @Test
   public void testLateralView() {
     // we need multiple lateral clauses and projection of columns
     // other than those from lateral view for more robust testing
-    final String sql = "" + "select icol, i_plusOne, d_plusTen, tcol, acol " + "from tableOne as t, "
-        + "     lateral (select t.icol + 1 as i_plusOne" + "              from (values(true))), "
-        + "     lateral (select t.dcol + 10 as d_plusTen" + "               from (values(true)))";
+    final String sql = "SELECT t.icol, dt1.i_plusOne, dt2.d_plusTen, t.tcol, t.acol\n" + "FROM test.tableOne t\n"
+        + "JOIN (SELECT t.icol + 1 as i_plusOne FROM test.tableOne t) dt1 ON 1=1\n"
+        + "JOIN (SELECT t.dcol + 10 as d_plusTen FROM test.tableOne t) dt2 ON 1=1";
 
-    final String expected = "" + "SELECT \"$cor1\".\"icol\" AS \"ICOL\", \"$cor1\".\"I_PLUSONE\" AS \"I_PLUSONE\", "
-        + "\"t2\".\"D_PLUSTEN\" AS \"D_PLUSTEN\", \"$cor1\".\"tcol\" AS \"TCOL\", \"$cor1\".\"acol\" AS \"ACOL\"\n"
-        + "FROM (\"tableOne\" AS \"$cor0\"\n" + "CROSS JOIN LATERAL (SELECT \"$cor0\".\"icol\" + 1 AS \"I_PLUSONE\"\n"
-        + "FROM (VALUES  (TRUE)) AS \"t\" (\"EXPR$0\")) AS \"t0\") AS \"$cor1\"\n"
-        + "CROSS JOIN LATERAL (SELECT \"$cor1\".\"dcol\" + 10 AS \"D_PLUSTEN\"\n"
-        + "FROM (VALUES  (TRUE)) AS \"t\" (\"EXPR$0\")) AS \"t2\"";
+    final String expected =
+        "SELECT \"tableone\".\"icol\" AS \"icol\", \"t\".\"i_plusOne\" AS \"i_plusOne\", \"t0\".\"d_plusTen\" AS \"d_plusTen\", \"tableone\".\"tcol\" AS \"tcol\", \"tableone\".\"acol\" AS \"acol\"\n"
+            + "FROM \"test\".\"tableone\" AS \"tableone\"\n"
+            + "INNER JOIN (SELECT \"tableone0\".\"icol\" + 1 AS \"i_plusOne\"\n"
+            + "FROM \"test\".\"tableone\" AS \"tableone0\") AS \"t\" ON 1 = 1\n"
+            + "INNER JOIN (SELECT \"tableone1\".\"dcol\" + 10 AS \"d_plusTen\"\n"
+            + "FROM \"test\".\"tableone\" AS \"tableone1\") AS \"t0\" ON 1 = 1";
     testConversion(sql, expected);
   }
 
-  @Test(enabled = false)
+  @Test
   public void testUnnestConstant() {
-    final String sql = "" + "SELECT c1 + 2\n" + "FROM UNNEST(ARRAY[(1, 1),(2, 2), (3, 3)]) as t(c1, c2)";
+    final String sql = "SELECT c1 + 2\n" + "FROM (SELECT 1 as c1, 1 as c2 UNION ALL"
+        + " SELECT 2 as c1, 2 as c2 UNION ALL" + " SELECT 3 as c1, 3 as c2) t";
 
-    final String expected = "" + "SELECT \"t0\".\"col_0\" + 2\n"
-        + "FROM UNNEST(ARRAY[ROW(1, 1), ROW(2, 2), ROW(3, 3)]) AS \"t0\" (\"col_0\", \"col_1\")";
+    final String expected = "SELECT \"t6\".\"c1\" + 2\n" + "FROM (SELECT *\n"
+        + "FROM (SELECT 1 AS \"c1\", 1 AS \"c2\"\n" + "FROM (VALUES  (0)) AS \"t\" (\"ZERO\")\n" + "UNION ALL\n"
+        + "SELECT 2 AS \"c1\", 2 AS \"c2\"\n" + "FROM (VALUES  (0)) AS \"t\" (\"ZERO\")) AS \"t3\"\n" + "UNION ALL\n"
+        + "SELECT 3 AS \"c1\", 3 AS \"c2\"\n" + "FROM (VALUES  (0)) AS \"t\" (\"ZERO\")) AS \"t6\"";
     testConversion(sql, expected);
   }
 
-  @Test(enabled = false)
+  @Test
   public void testLateralViewUnnest() {
-    String sql = "select icol, acol_elem from tableOne as t cross join unnest(t.acol) as t1(acol_elem)";
-    String expectedSql = "" + "SELECT \"$cor0\".\"icol\" AS \"ICOL\", \"t1\".\"ACOL_ELEM\" AS \"ACOL_ELEM\"\n"
-        + "FROM \"tableOne\" AS \"$cor0\"\nCROSS JOIN LATERAL (SELECT \"acol\" AS \"ACOL_ELEM\"\n"
-        + "FROM UNNEST(\"$cor0\".\"acol\") AS \"t0\" (\"acol\")) AS \"t1\"";
+    String sql = "select icol, acol_elem from test.tableOne LATERAL VIEW explode(acol) t1 AS acol_elem";
+    String expectedSql = "SELECT \"tableone\".\"icol\" AS \"icol\", \"t0\".\"acol_elem\" AS \"acol_elem\"\n"
+        + "FROM \"test\".\"tableone\" AS \"tableone\"\n"
+        + "CROSS JOIN UNNEST(\"tableone\".\"acol\") AS \"t0\" (\"acol_elem\")";
     testConversion(sql, expectedSql);
   }
 
@@ -270,216 +294,259 @@ public class RelToTrinoConverterTest {
   }
 
   // set queries
-  @Test(enabled = false)
+  @Test
   public void testUnion() {
-    testSetQueries("UNION");
-  }
-
-  @Test(enabled = false)
-  public void testIntersect() {
-    testSetQueries("INTERSECT");
-  }
-
-  @Test(enabled = false)
-  public void testExcept() {
-    testSetQueries("EXCEPT");
-  }
-
-  private void testSetQueries(String operator) {
-    String sql = "SELECT icol FROM " + tableOne + " " + operator + "\n" + "SELECT ifield FROM "
-        + TABLE_TWO.getTableName() + " WHERE sfield = 'abc'";
-    String expectedSql = formatSql("SELECT icol as icol FROM " + tableOne + " " + operator
-        + " SELECT ifield as ifield from " + tableTwo + " " + "where sfield = 'abc'");
+    // SELECT "tableone"."icol" AS "icol"
+    //FROM "test"."tableone" AS "tableone"
+    //UNION ALL
+    //SELECT t0.structField
+    //FROM "test"."tabletwo" AS "tabletwo"
+    //WHERE "tabletwo"."sfield" = 'abc'
+    String sql = "SELECT icol FROM test.tableone UNION ALL SELECT ifield FROM test.tabletwo WHERE sfield = 'abc'";
+    String expectedSql = "SELECT \"tableone\".\"icol\" AS \"icol\"\n" + "FROM \"test\".\"tableone\" AS \"tableone\"\n"
+        + "UNION ALL" + "\n" + "SELECT \"tabletwo\".\"ifield\" AS \"ifield\"\n"
+        + "FROM \"test\".\"tabletwo\" AS \"tabletwo\"\n" + " WHERE \"tabletwo\".\"sfield\" = 'abc'";
     testConversion(sql, expectedSql);
   }
 
-  @Test(enabled = false)
+  @Test
   public void testCast() {
-    String sql = "SELECT cast(dcol as integer) as d, cast(icol as double) as i " + "FROM " + TABLE_ONE.getTableName();
+    String sql = "SELECT cast(dcol as int) as d, cast(icol as double) as i FROM test.tableOne";
     String expectedSql =
-        formatSql("SELECT CAST(dcol as integer) as d, cast(icol as double) as i" + " from " + tableOne);
+        "SELECT CAST(\"tableone\".\"dcol\" AS INTEGER) AS \"d\", CAST(\"tableone\".\"icol\" AS DOUBLE) AS \"i\"\n"
+            + "FROM \"test\".\"tableone\" AS \"tableone\"";
     testConversion(sql, expectedSql);
   }
 
-  @Test(enabled = false)
+  @Test
   public void testVarcharCast() {
-    final String sql = "SELECT cast(icol as varchar(1000)) FROM " + tableOne;
-    testConversion(sql, "SELECT CAST(\"icol\" AS VARCHAR(1000))\nFROM \"" + tableOne + "\"");
+    final String sql = "SELECT cast(icol as varchar(1000)) FROM test.tableOne";
+    testConversion(sql,
+        "SELECT CAST(\"tableone\".\"icol\" AS VARCHAR(65535))\n" + "FROM \"test\".\"tableone\" AS \"tableone\"");
   }
 
-  @Test(enabled = false)
+  @Test
   public void testRand() {
-    String sql1 = "SELECT icol, rand() " + "FROM " + TABLE_ONE.getTableName();
-    String expectedSql1 = formatSql("SELECT icol AS \"ICOL\", \"RANDOM\"()" + " from " + tableOne);
+    String sql1 = "SELECT icol, rand() " + "FROM test.tableOne";
+    String expectedSql1 =
+        "SELECT \"tableone\".\"icol\" AS \"icol\", \"RANDOM\"()\n" + "FROM \"test\".\"tableone\" AS \"tableone\"";
     testConversion(sql1, expectedSql1);
 
-    String sql2 = "SELECT icol, rand(1) " + "FROM " + TABLE_ONE.getTableName();
-    String expectedSql2 = formatSql("SELECT icol AS \"ICOL\", \"RANDOM\"()" + " from " + tableOne);
+    String sql2 = "SELECT icol, rand(1) " + "FROM test.tableOne";
+    String expectedSql2 =
+        "SELECT \"tableone\".\"icol\" AS \"icol\", \"RANDOM\"()\n" + "FROM \"test\".\"tableone\" AS \"tableone\"";
     testConversion(sql2, expectedSql2);
   }
 
-  @Test(enabled = false)
+  @Test
   public void testRandInteger() {
-    String sql1 = "SELECT rand_integer(2, icol) " + "FROM " + TABLE_ONE.getTableName();
-    String expectedSql1 = formatSql("SELECT \"RANDOM\"(icol)" + " from " + tableOne);
+    String sql1 = "SELECT floor(rand() * (icol - 2 + 1) + 2) FROM test.tableOne";
+    String expectedSql1 = "SELECT CAST(FLOOR(\"RANDOM\"() * (\"tableone\".\"icol\" - 2 + 1) + 2) AS BIGINT)\n"
+        + "FROM \"test\".\"tableone\" AS \"tableone\"";
     testConversion(sql1, expectedSql1);
 
-    String sql2 = "SELECT rand_integer(icol) " + "FROM " + TABLE_ONE.getTableName();
-    String expectedSql2 = formatSql("SELECT \"RANDOM\"(icol)" + " from " + tableOne);
+    String sql2 = "SELECT floor(rand() * icol) FROM test.tableOne";
+    String expectedSql2 = "SELECT CAST(FLOOR(\"RANDOM\"() * \"tableone\".\"icol\") AS BIGINT)\n"
+        + "FROM \"test\".\"tableone\" AS \"tableone\"";
     testConversion(sql2, expectedSql2);
     {
-      final String sql = "SELECT icol FROM " + TABLE_ONE.getTableName() + " WHERE rand_integer(icol) > 10";
-      final String expected = "SELECT \"icol\" AS \"ICOL\"\nFROM \"" + TABLE_ONE.getTableName() + "\""
-          + "\nWHERE \"RANDOM\"(\"icol\") > 10";
+      final String sql = "SELECT icol FROM test.tableOne" + " WHERE floor(rand() * icol) > 10";
+      final String expected = "SELECT \"tableone\".\"icol\"\n" + "FROM \"test\".\"tableone\" AS \"tableone\"\n"
+          + "WHERE CAST(FLOOR(\"RANDOM\"() * \"tableone\".\"icol\") AS BIGINT) > 10";
       testConversion(sql, expected);
     }
   }
 
-  @Test(enabled = false)
+  @Test
   public void testTruncate() {
-    String sql1 = "SELECT truncate(dcol) " + "FROM " + TABLE_ONE.getTableName();
-    String expectedSql1 = formatSql("SELECT TRUNCATE(dcol)" + " from " + tableOne);
+    String sql1 = "SELECT floor(dcol) FROM test.tableOne";
+    String expectedSql1 =
+        "SELECT CAST(FLOOR(\"tableone\".\"dcol\") AS BIGINT)\n" + "FROM \"test\".\"tableone\" AS \"tableone\"";
     testConversion(sql1, expectedSql1);
 
-    String sql2 = "SELECT truncate(dcol, 2) " + "FROM " + TABLE_ONE.getTableName();
-    String expectedSql2 = formatSql("SELECT TRUNCATE(dcol * POWER(10, 2)) / POWER(10, 2)" + " from " + tableOne);
+    String sql2 = "SELECT round(dcol, 2 - floor(log10(abs(dcol))) - 1) FROM test.tableOne";
+    String expectedSql2 =
+        "SELECT ROUND(\"tableone\".\"dcol\", 2 - CAST(FLOOR(LOG10(ABS(\"tableone\".\"dcol\"))) AS BIGINT) - 1)\n"
+            + "FROM \"test\".\"tableone\" AS \"tableone\"";
     testConversion(sql2, expectedSql2);
   }
 
-  @Test(enabled = false)
+  @Test
   public void testSubString2() {
-    String sql = "SELECT SUBSTRING(scol FROM 1) " + "FROM " + TABLE_ONE.getTableName();
-    String expectedSql = formatSql("SELECT \"SUBSTR\"(scol, 1)" + " from " + tableOne);
+    String sql = "SELECT SUBSTR(scol, 1) FROM test.tableOne";
+    String expectedSql = "ELECT \"substr\"(\"tableone\".\"scol\", 1)\n" + "FROM \"test\".\"tableone\" AS \"tableone\"";
     testConversion(sql, expectedSql);
   }
 
-  @Test(enabled = false)
+  @Test
   public void testSubString3() {
-    String sql = "SELECT SUBSTRING(scol FROM icol FOR 3) " + "FROM " + TABLE_ONE.getTableName();
-    String expectedSql = formatSql("SELECT \"SUBSTR\"(scol, icol, 3)" + " from " + tableOne);
+    String sql = "SELECT SUBSTR(scol, icol, 3) FROM test.tableOne";
+    String expectedSql = "SELECT \"substr\"(\"tableone\".\"scol\", \"tableone\".\"icol\", 3)\n"
+        + "FROM \"test\".\"tableone\" AS \"tableone\"";
     testConversion(sql, expectedSql);
   }
 
-  @Test(enabled = false)
+  @Test
   public void testLimit() {
-    String sql = "SELECT icol " + "FROM " + TABLE_ONE.getTableName() + " LIMIT 100";
-    String expectedSql = formatSql("SELECT icol AS ICOL" + " from " + tableOne + "\nLIMIT 100");
+    String sql = "SELECT icol " + "FROM test.tableOne" + " LIMIT 100";
+    String expectedSql =
+        "SELECT \"tableone\".\"icol\" AS \"icol\"\n" + "FROM \"test\".\"tableone\" AS \"tableone\"\n" + "LIMIT 100";
     testConversion(sql, expectedSql);
   }
 
-  @Test(enabled = false)
+  @Test
   public void testDistinct() {
-    String sql = "SELECT distinct icol FROM " + TABLE_ONE.getTableName();
-    String expectedSql = formatSql("SELECT icol AS ICOL" + " from " + tableOne + " GROUP BY icol");
+    String sql = "SELECT distinct icol FROM test.tableOne";
+    String expectedSql = "SELECT \"tableone\".\"icol\" AS \"icol\"\n" + "FROM \"test\".\"tableone\" AS \"tableone\"\n"
+        + "GROUP BY \"tableone\".\"icol\"";
     testConversion(sql, expectedSql);
   }
 
-  @Test(enabled = false)
+  @Test
   public void testGroupDistinct() {
-    String sql = "SELECT scol, count(distinct icol) FROM " + TABLE_ONE.getTableName() + " GROUP BY scol";
-    String expectedSql = formatSql("SELECT scol AS SCOL, COUNT(DISTINCT icol) FROM " + tableOne + " GROUP BY scol");
+    String sql = "SELECT scol, count(distinct icol) FROM test.tableOne" + " GROUP BY scol";
+    String expectedSql = "SELECT \"tableone\".\"scol\" AS \"scol\", COUNT(DISTINCT \"tableone\".\"icol\")\n"
+        + "FROM \"test\".\"tableone\" AS \"tableone\"\n" + "GROUP BY \"tableone\".\"scol\"";
     testConversion(sql, expectedSql);
   }
 
-  @Test(enabled = false)
+  @Test
   public void testJoin() {
-    String sql = "SELECT a.icol, b.dfield  FROM " + tableOne + " a JOIN " + tableTwo + " b ON a.scol = b.sfield";
-    String expectedSql = formatSql("SELECT tableOne.icol AS ICOL, tableTwo.dfield as DFIELD\nFROM " + tableOne
-        + "\nINNER JOIN " + tableTwo + " ON tableOne.scol = tableTwo.sfield");
+    String sql = "SELECT a.icol, b.dfield  FROM test.tableOne" + " a JOIN test.tableTwo" + " b ON a.scol = b.sfield";
+    String expectedSql = "SELECT \"tableone\".\"icol\" AS \"icol\", \"tabletwo\".\"dfield\" AS \"dfield\"\n"
+        + "FROM \"test\".\"tableone\" AS \"tableone\"\n"
+        + "INNER JOIN \"test\".\"tabletwo\" AS \"tabletwo\" ON \"tableone\".\"scol\" = \"tabletwo\".\"sfield\"";
     testConversion(sql, expectedSql);
   }
 
-  @Test(enabled = false)
+  @Test
   public void testLeftJoin() {
-    String sql = "SELECT a.icol, b.dfield  FROM " + tableOne + " a LEFT JOIN " + tableTwo + " b ON a.scol = b.sfield";
-    String expectedSql = formatSql("SELECT tableOne.icol AS ICOL, tableTwo.dfield as DFIELD\nFROM " + tableOne
-        + "\nLEFT JOIN " + tableTwo + " ON tableOne.scol = tableTwo.sfield");
+    String sql =
+        "SELECT a.icol, b.dfield  FROM test.tableOne" + " a LEFT JOIN test.tableTwo" + " b ON a.scol = b.sfield";
+    String expectedSql = "SELECT \"tableone\".\"icol\" AS \"icol\", \"tabletwo\".\"dfield\" AS \"dfield\"\n"
+        + "FROM \"test\".\"tableone\" AS \"tableone\"\n"
+        + "LEFT JOIN \"test\".\"tabletwo\" AS \"tabletwo\" ON \"tableone\".\"scol\" = \"tabletwo\".\"sfield\"";
     testConversion(sql, expectedSql);
   }
 
-  @Test(enabled = false)
+  @Test
   public void testRightJoin() {
-    String sql = "SELECT a.icol, b.dfield  FROM " + tableOne + " a RIGHT JOIN " + tableTwo + " b ON a.scol = b.sfield";
-    String expectedSql = formatSql("SELECT tableOne.icol AS ICOL, tableTwo.dfield as DFIELD\nFROM " + tableOne
-        + "\nRIGHT JOIN " + tableTwo + " ON tableOne.scol = tableTwo.sfield");
+    String sql =
+        "SELECT a.icol, b.dfield  FROM test.tableOne" + " a RIGHT JOIN test.tableTwo" + " b ON a.scol = b.sfield";
+    String expectedSql = "SELECT \"tableone\".\"icol\" AS \"icol\", \"tabletwo\".\"dfield\" AS \"dfield\"\n"
+        + "FROM \"test\".\"tableone\" AS \"tableone\"\n"
+        + "LEFT JOIN \"test\".\"tabletwo\" AS \"tabletwo\" ON \"tableone\".\"scol\" = \"tabletwo\".\"sfield\"";
     testConversion(sql, expectedSql);
   }
 
-  @Test(enabled = false)
+  @Test
   public void testOuterJoin() {
     String sql =
-        "SELECT a.icol, b.dfield  FROM " + tableOne + " a FULL OUTER JOIN " + tableTwo + " b ON a.scol = b.sfield";
-    String expectedSql = formatSql("SELECT tableOne.icol AS ICOL, tableTwo.dfield as DFIELD\nFROM " + tableOne
-        + "\nFULL JOIN " + tableTwo + " ON tableOne.scol = tableTwo.sfield");
+        "SELECT a.icol, b.dfield  FROM test.tableOne" + " a FULL OUTER JOIN test.tableTwo" + " b ON a.scol = b.sfield";
+    String expectedSql = "SELECT \"tableone\".\"icol\" AS \"icol\", \"tabletwo\".\"dfield\" AS \"dfield\"\n"
+        + "FROM \"test\".\"tableone\" AS \"tableone\"\n"
+        + "FULL JOIN \"test\".\"tabletwo\" AS \"tabletwo\" ON \"tableone\".\"scol\" = \"tabletwo\".\"sfield\"";
     testConversion(sql, expectedSql);
   }
 
-  @Test(enabled = false)
+  @Test
   public void testTryCastIntTrino() {
-    String sql =
-        "SELECT CASE WHEN a.scol= 0 THEN TRUE ELSE FALSE END AS testcol FROM " + tableOne + " a WHERE a.scol = 1";
-    String expectedSql =
-        formatSql("SELECT CASE WHEN TRY_CAST(scol AS INTEGER) = 0 THEN TRUE ELSE FALSE END AS TESTCOL\nFROM " + tableOne
-            + "\nWHERE " + "TRY_CAST(scol AS INTEGER) = 1");
+    String sql = "SELECT CASE WHEN a.scol= 0 THEN TRUE ELSE FALSE END AS testcol FROM test.tableOne a WHERE a.scol = 1";
+    // SELECT CASE WHEN TRY_CAST("t"."scol" AS INTEGER) = 0 THEN TRUE ELSE FALSE END AS "testcol"
+    //FROM "test"."tableone" AS "tableone"
+    //WHERE TRY_CAST("tableone"."scol" AS INTEGER) = 1
+    String expectedSql = "SELECT CASE WHEN TRY_CAST(\"scol\" AS INTEGER) = 0 THEN TRUE ELSE FALSE END AS \"testcol\"\n"
+        + "FROM \"test\".\"tableone\"\n" + "WHERE TRY_CAST(\"scol\" AS INTEGER) = 1";
     testConversion(sql, expectedSql);
   }
 
-  @Test(enabled = false)
+  @Test
   public void testTryCastBooleanTrino() {
-    String sql = "SELECT CASE WHEN a.scol= TRUE THEN TRUE ELSE FALSE END AS testcol FROM " + tableOne
+    String sql = "SELECT CASE WHEN a.scol= TRUE THEN TRUE ELSE FALSE END AS testcol FROM test.tableOne"
         + " a WHERE a.scol = FALSE";
+    // SELECT CASE WHEN TRY_CAST("t"."scol" AS BOOLEAN) = TRUE THEN TRUE ELSE FALSE END AS "testcol"
+    //FROM "test"."tableone" AS "tableone"
+    //WHERE TRY_CAST("tableone"."scol" AS BOOLEAN) = FALSE
     String expectedSql =
-        formatSql("SELECT CASE WHEN TRY_CAST(scol AS BOOLEAN) = TRUE THEN TRUE ELSE FALSE END AS TESTCOL\nFROM "
-            + tableOne + "\nWHERE " + "TRY_CAST(scol AS BOOLEAN) = FALSE");
+        "SELECT CASE WHEN TRY_CAST(\"scol\" AS BOOLEAN) = TRUE THEN TRUE ELSE FALSE END AS \"testcol\"\nFROM \"test\".\"tableone\""
+            + "\nWHERE " + "TRY_CAST(\"scol\" AS BOOLEAN) = FALSE";
     testConversion(sql, expectedSql);
   }
 
-  @Test(enabled = false)
+  @Test
   public void testCase() {
-    String sql = "SELECT case when icol = 0 then scol else 'other' end from " + tableOne;
-    String expected = formatSql("SELECT CASE WHEN icol = 0 THEN scol ELSE 'other' END FROM " + tableOne);
+    String sql = "SELECT case when icol = 0 then scol else 'other' end from test.tableOne";
+    String expected = "SELECT CASE WHEN \"tableone\".\"icol\" = 0 THEN \"tableone\".\"scol\" ELSE 'other' END\n"
+        + "FROM \"test\".\"tableone\" AS \"tableone\"";
     testConversion(sql, expected);
 
-    String sqlNull = "SELECT case when icol = 0 then scol end from " + tableOne;
-    String expectedNull =
-        formatSql("SELECT CASE WHEN icol = 0 THEN CAST(scol AS VARCHAR) ELSE NULL END FROM " + tableOne);
+    String sqlNull = "SELECT case when icol = 0 then scol end from test.tableOne";
+    String expectedNull = "SELECT CASE WHEN \"tableone\".\"icol\" = 0 THEN \"tableone\".\"scol\" ELSE NULL END\n"
+        + "FROM \"test\".\"tableone\" AS \"tableone\"";
     testConversion(sqlNull, expectedNull);
   }
 
-  @Test(enabled = false)
+  @Test
   public void testDataTypeSpecRewrite() {
-    String sql1 = "SELECT CAST(icol AS FLOAT) FROM " + tableOne;
-    String expectedSql1 = formatSql("SELECT CAST(icol AS REAL) FROM " + tableOne);
+    String sql1 = "SELECT CAST(icol AS FLOAT) FROM test.tableOne";
+    String expectedSql1 = "SELECT CAST(\"tableone\".\"icol\" AS REAL)\n" + "FROM \"test\".\"tableone\" AS \"tableone\"";
     testConversion(sql1, expectedSql1);
 
-    String sql2 = "SELECT CAST(binaryfield AS BINARY(123)) FROM " + tableThree;
-    String expectedSql2 = formatSql("SELECT CAST(binaryfield AS VARBINARY) FROM " + tableThree);
+    String sql2 = "SELECT CAST(binaryfield AS BINARY) FROM test.tableThree";
+    String expectedSql2 =
+        "SELECT CAST(\"tablethree\".\"binaryfield\" AS VARBINARY)\n" + "FROM \"test\".\"tablethree\" AS \"tablethree\"";
     testConversion(sql2, expectedSql2);
 
-    String sql3 = "SELECT CAST(varbinaryfield AS VARBINARY(123)) FROM " + tableThree;
-    String expectedSql3 = formatSql("SELECT CAST(varbinaryfield AS VARBINARY) FROM " + tableThree);
+    String sql3 = "SELECT CAST(varbinaryfield AS BINARY) FROM test.tableThree";
+    String expectedSql3 = "SELECT CAST(\"tablethree\".\"varbinaryfield\" AS VARBINARY)\n"
+        + "FROM \"test\".\"tablethree\" AS \"tablethree\"";
     testConversion(sql3, expectedSql3);
   }
 
-  @Test(enabled = false)
+  @Test
   public void testCurrentUser() {
     String sql = "SELECT current_user";
-    String expected = formatSql("SELECT CURRENT_USER AS \"CURRENT_USER\"\nFROM (VALUES  (0)) AS \"t\" (\"ZERO\")");
+    String expected = formatSql("SELECT CURRENT_USER AS \"current_user\"\nFROM (VALUES  (0)) AS \"t\" (\"ZERO\")");
     testConversion(sql, expected);
   }
 
-  @Test(enabled = false)
+  @Test
   public void testCurrentTimestamp() {
     String sql = "SELECT current_timestamp";
-    String expected = formatSql(
-        "SELECT CAST(CURRENT_TIMESTAMP AS TIMESTAMP(3)) AS \"CURRENT_TIMESTAMP\"\nFROM (VALUES  (0)) AS \"t\" (\"ZERO\")");
+    String expected =
+        formatSql("SELECT CAST(CURRENT_TIMESTAMP AS TIMESTAMP(3))\nFROM (VALUES  (0)) AS \"t\" (\"ZERO\")");
     testConversion(sql, expected);
   }
 
-  @Test(enabled = false)
+  @Test
   public void testCurrentDate() {
     String sql = "SELECT current_date";
-    String expected = formatSql("SELECT CURRENT_DATE AS \"CURRENT_DATE\"\nFROM (VALUES  (0)) AS \"t\" (\"ZERO\")");
+    String expected = formatSql("SELECT CURRENT_DATE\nFROM (VALUES  (0)) AS \"t\" (\"ZERO\")");
     testConversion(sql, expected);
   }
 }
+
+/**
+ *
+ * input SQL -
+ * select tableTwo.structCol From tableTwo where sfield = "abc"
+ *
+ * SqlNode2:
+ * SELECT tableTwo.structField
+ *  * FROM "test"."tabletwo" AS "tabletwo"
+ *  * WHERE "tabletwo"."sfield" = 'abc'
+ *
+ * Project
+ * Filter
+ * Scan
+ *
+ *
+ *
+ * SELECT t0.structField
+ * FROM "test"."tabletwo" AS "tabletwo"
+ * WHERE "tabletwo"."sfield" = 'abc'
+ *
+ *
+ *
+ *
+ */
