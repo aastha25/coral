@@ -213,6 +213,7 @@ public class RelToAvroSchemaConverter {
     @Override
     public RelNode visit(LogicalProject logicalProject) {
       RelNode relNode = super.visit(logicalProject);
+      // sanitize rel's rowType to change RecordType(varchar() Arr tag_0) -> varchar() arr
       Schema inputSchema = schemaMap.get(logicalProject.getInput());
 
       Queue<String> suggestedFieldNames = new LinkedList<>();
@@ -587,4 +588,37 @@ public class RelToAvroSchemaConverter {
       return targetField;
     }
   }
+
+  //  private static void removeSingleTypeUnionFromRow(RelDataType rowType) {
+  //    List<RelDataTypeField> relFields = rowType.getFieldList();
+  //
+  //    for (RelDataTypeField relDataTypeField : relFields) {
+  //      isTypeCastRequired(relDataTypeField);
+  //    }
+  //  }
+  //
+  //  private static void isTypeCastRequired(RelDataTypeField inputType) {
+  //    if(inputType.getValue().getSqlTypeName() == SqlTypeName.ROW && inputType.getValue().getFieldCount() == 1 ) {
+  //      RelRecordType recordType = (RelRecordType) inputType.getValue();
+  //      RelDataTypeField subfield = recordType.getFieldList().get(0);
+  //      if (subfield.getKey().equalsIgnoreCase("tag_0")) {
+  //        RelDataType desiredType = subfield.getValue();
+  //        inputType.setValue(desiredType);
+  //      }
+  //
+  //    }
+  //
+  //    switch (inputType.getValue().getSqlTypeName()) {
+  //      case ARRAY:
+  //        return isTypeCastRequired(inputType.getValue().getComponentType());
+  //      case MAP:
+  //        return isTypeCastRequired(inputType.getValueType());
+  //      case ROW:
+  //        return removeSingleTypeUnionFromRow(inputType.getFieldList());
+  //      default:
+  //        return !nullableFieldDataType.equals(castToType);
+  //    }
+  //    return;
+  //  }
+
 }

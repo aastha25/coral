@@ -37,6 +37,7 @@ import org.apache.hadoop.hive.serde2.typeinfo.StructTypeInfo;
 import org.apache.hadoop.hive.serde2.typeinfo.TypeInfo;
 import org.apache.hadoop.hive.serde2.typeinfo.TypeInfoFactory;
 import org.apache.hadoop.hive.serde2.typeinfo.TypeInfoUtils;
+import org.apache.hadoop.hive.serde2.typeinfo.UnionTypeInfo;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -163,11 +164,12 @@ class SchemaUtilities {
       schemaStr = table.getParameters().get(DALI_ROW_SCHEMA);
       if (!Strings.isNullOrEmpty(schemaStr)) {
         schemaStr = schemaStr.replaceAll("\n", "\\\\n");
+        schema = RemoveSingleTypeUnionVisitor.visit(AvroCompatibilityHelper.parse(schemaStr));
         // Given schemas stored in `dali.row.schema` are all non-nullable, we need to convert them to be nullable to be compatible with Spark
-        schema = ToNullableSchemaVisitor.visit(AvroCompatibilityHelper.parse(schemaStr));
+        schema = ToNullableSchemaVisitor.visit(schema);
       }
     } else {
-      schema = AvroCompatibilityHelper.parse(schemaStr);
+      schema = RemoveSingleTypeUnionVisitor.visit(AvroCompatibilityHelper.parse(schemaStr));
     }
 
     if (schema != null) {
@@ -842,7 +844,13 @@ class SchemaUtilities {
 
     columns.forEach(fs -> {
       columnNames.add(fs.getName());
-      columnsTypeInfo.add(TypeInfoUtils.getTypeInfoFromTypeString(fs.getType()));
+      TypeInfo fieldTypeInfo = TypeInfoUtils.getTypeInfoFromTypeString(fs.getType());
+
+      if (fieldTypeInfo instanceof UnionTypeInfo
+          && ((UnionTypeInfo) fieldTypeInfo).getAllUnionObjectTypeInfos().size() == 1) {
+        fieldTypeInfo = ((UnionTypeInfo) fieldTypeInfo).getAllUnionObjectTypeInfos().get(0);
+      }
+      columnsTypeInfo.add(fieldTypeInfo);
     });
 
     return new TypeInfoToAvroSchemaConverter(recordNamespace, mkFieldsOptional).convertFieldsTypeInfoToAvroSchema("",
@@ -1004,9 +1012,20 @@ class SchemaUtilities {
 
   static StructTypeInfo structTypeInfoFromCols(List<FieldSchema> cols) {
     Preconditions.checkArgument(cols != null && cols.size() > 0, "No Hive schema present");
-    List<String> fieldNames = cols.stream().map(FieldSchema::getName).collect(Collectors.toList());
-    List<TypeInfo> fieldTypeInfos =
-        cols.stream().map(f -> TypeInfoUtils.getTypeInfoFromTypeString(f.getType())).collect(Collectors.toList());
+    List<String> fieldNames = new ArrayList<>(cols.size());
+    List<TypeInfo> fieldTypeInfos = new ArrayList<>(cols.size());
+
+    cols.forEach(fs -> {
+      fieldNames.add(fs.getName());
+      TypeInfo fieldTypeInfo = TypeInfoUtils.getTypeInfoFromTypeString(fs.getType());
+
+      if (fieldTypeInfo instanceof UnionTypeInfo
+          && ((UnionTypeInfo) fieldTypeInfo).getAllUnionObjectTypeInfos().size() == 1) {
+        fieldTypeInfo = ((UnionTypeInfo) fieldTypeInfo).getAllUnionObjectTypeInfos().get(0);
+      }
+      fieldTypeInfos.add(fieldTypeInfo);
+    });
+
     return (StructTypeInfo) TypeInfoFactory.getStructTypeInfo(fieldNames, fieldTypeInfos);
   }
 
@@ -1022,5 +1041,58 @@ class SchemaUtilities {
     } else {
       return schema;
     }
+  }
+
+  public static Schema replaceUnionTypes(Schema schema) {
+    switch (schema.getType()) {
+      case RECORD:
+        List<Schema.Field> fields = schema.getFields();
+        for (Schema.Field field : fields) {
+          Schema fieldSchema = field.schema();
+          if (fieldSchema.getType() == UNION) {
+            List<Schema> types = fieldSchema.getTypes();
+            if (types.size() == 2 && types.contains(Schema.create(NULL))) {
+              Schema nonNullSchema = types.stream().filter(type -> type.getType() != NULL).findFirst()
+                  .orElseThrow(() -> new IllegalArgumentException("Union type must contain a non-null type"));
+              if (nonNullSchema.getType() == UNION && nonNullSchema.getTypes().size() == 1) {
+                Schema replacementSchema = nonNullSchema.getTypes().get(0);
+                Schema.Field newField = new Schema.Field(field.name(), replaceUnionTypes(replacementSchema),
+                    field.doc(), field.defaultVal());
+                fields.set(fields.indexOf(field), newField);
+              } else if (nonNullSchema.getType() != UNION) {
+                Schema.Field newField =
+                    new Schema.Field(field.name(), replaceUnionTypes(nonNullSchema), field.doc(), field.defaultVal());
+                fields.set(fields.indexOf(field), newField);
+              }
+            } else {
+              Schema replacementSchema = replaceUnionTypes(fieldSchema);
+              Schema.Field newField =
+                  new Schema.Field(field.name(), replaceUnionTypes(replacementSchema), field.doc(), field.defaultVal());
+              fields.set(fields.indexOf(field), newField);
+            }
+          } else if (fieldSchema.getType() == RECORD) {
+            replaceUnionTypes(fieldSchema);
+          }
+        }
+        break;
+      case UNION:
+        List<Schema> types = schema.getTypes();
+        if (types.size() == 1) {
+          Schema nonUnionSchema = replaceUnionTypes(types.get(0));
+          schema = Schema.createUnion(nonUnionSchema);
+        }
+        break;
+      case ARRAY:
+        Schema elementType = schema.getElementType();
+        Schema replacedElementType = replaceUnionTypes(elementType);
+        schema = Schema.createArray(replacedElementType);
+        break;
+      case MAP:
+        Schema valueType = schema.getValueType();
+        Schema replacedValueType = replaceUnionTypes(valueType);
+        schema = Schema.createMap(replacedValueType);
+        break;
+    }
+    return schema;
   }
 }

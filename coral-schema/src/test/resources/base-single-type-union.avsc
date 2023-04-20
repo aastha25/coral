@@ -1,0 +1,15 @@
+{
+  "type" : "record",
+  "name" : "basesingletypeunion",
+  "namespace" : "coral.schema.avro.base.complex.union.type",
+  "fields" : [ {
+    "name" : "unionCol",
+    "type" : [ "string" ]
+  },
+    {
+      "name" : "int_col",
+      "type" : "int"
+    }
+
+  ]
+}

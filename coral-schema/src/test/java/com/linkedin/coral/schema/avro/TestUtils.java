@@ -97,6 +97,7 @@ public class TestUtils {
     String baseNullTypeFieldSchema = loadSchema("base-null-type-field.avsc");
     String baseTimestampTypeFieldSchema = loadSchema("base-timestamp-type-field.avsc");
     String baseComplexUnionTypeSchema = loadSchema("base-complex-union-type.avsc");
+    String baseSingleTypeUnionSchema = loadSchema("base-single-type-union.avsc");
     String baseNestedUnionSchema = loadSchema("base-nested-union.avsc");
     String baseComplexLowercase = loadSchema("base-complex-lowercase.avsc");
     String baseComplexNullableWithDefaults = loadSchema("base-complex-nullable-with-defaults.avsc");
@@ -112,6 +113,7 @@ public class TestUtils {
     executeCreateTableQuery("default", "basenulltypefield", baseNullTypeFieldSchema);
     executeCreateTableQuery("default", "basetimestamptypefield", baseTimestampTypeFieldSchema);
     executeCreateTableQuery("default", "basecomplexuniontype", baseComplexUnionTypeSchema);
+    executeCreateTableQuery("default", "basesingletypeunion", baseSingleTypeUnionSchema);
     executeCreateTableQuery("default", "basenestedunion", baseNestedUnionSchema);
     executeCreateTableQuery("default", "basecomplexlowercase", baseComplexLowercase);
     executeCreateTableQuery("default", "baseprimitive", basePrimitive);

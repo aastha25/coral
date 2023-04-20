@@ -1,0 +1,12 @@
+{
+  "type" : "record",
+  "name" : "v",
+  "namespace" : "default.v",
+  "fields" : [ {
+    "name" : "unionCol",
+    "type" : "string"
+  }, {
+    "name" : "int_col",
+    "type" : "int"
+  } ]
+}
