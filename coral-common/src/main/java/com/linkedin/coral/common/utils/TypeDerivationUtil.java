@@ -122,6 +122,14 @@ public class TypeDerivationUtil {
   }
 
   private class SqlNodePostprocessorForTypeDerivation extends SqlShuttle {
+    // This transformation logic is applied during the validation process to handle SqlJoin SqlCalls that contain a nested
+    // LATERAL SqlOperator. The sqlValidator drops the LATERAL operator during validation, resulting
+    // in an incorrect SqlCall:
+    // SqlJoin[default.complex , UNNEST(`complex`.`c`) AS `t_alias` (`col_alias`)]
+    //
+    // The absence of the LATERAL operator in the SqlCall can lead to failure in type derivation.
+    // Therefore, the LATERAL operator is added back when it is missing:
+    // SqlJoin[default.complex , LATERAL UNNEST(`complex`.`c`) AS `t_alias` (`col_alias`)]
     @Override
     public SqlNode visit(SqlCall sqlCall) {
       if (sqlCall instanceof SqlJoin) {

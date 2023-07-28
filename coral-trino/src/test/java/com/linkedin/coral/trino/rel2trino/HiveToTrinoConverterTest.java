@@ -340,6 +340,21 @@ public class HiveToTrinoConverterTest {
   }
 
   @Test
+  public void testConcatWithLateral() {
+    RelNode relNode = TestUtils.getHiveToRelConverter().convertView("test", "lateral_view_json_tuple_concat");
+    RelToTrinoConverter relToTrinoConverter = TestUtils.getRelToTrinoConverter();
+    String expandedSql = relToTrinoConverter.convert(relNode);
+    String expectedSql =
+        "SELECT \"tablea\".\"a\" AS \"a\", \"t0\".\"d\" AS \"d\", \"concat\"('tmp1', \"t0\".\"d\") AS \"modd\", \"t0\".\"e\" AS \"e\", \"concat\"('tmp1', \"t0\".\"e\") AS \"mode\", \"t0\".\"f\" AS \"f\"\n"
+            + "FROM \"test\".\"tablea\" AS \"tablea\"\nCROSS JOIN LATERAL (SELECT "
+            + "\"if\"(\"REGEXP_LIKE\"('trino', '^[^\\\"]*$'), CAST(\"json_extract\"(\"tablea\".\"b\".\"b1\", '$[\"' || 'trino' || '\"]') AS VARCHAR(65535)), NULL) AS \"d\", "
+            + "\"if\"(\"REGEXP_LIKE\"('always', '^[^\\\"]*$'), CAST(\"json_extract\"(\"tablea\".\"b\".\"b1\", '$[\"' || 'always' || '\"]') AS VARCHAR(65535)), NULL) AS \"e\", "
+            + "\"if\"(\"REGEXP_LIKE\"('rocks', '^[^\\\"]*$'), CAST(\"json_extract\"(\"tablea\".\"b\".\"b1\", '$[\"' || 'rocks' || '\"]') AS VARCHAR(65535)), NULL) AS \"f\"\n"
+            + "FROM (VALUES  (0)) AS \"t\" (\"ZERO\")) AS \"t0\" (\"d\", \"e\", \"f\")";
+    assertEquals(expandedSql, expectedSql);
+  }
+
+  @Test
   public void testIfWithNullAsThirdParameter() {
     RelNode relNode = TestUtils.getHiveToRelConverter().convertSql("SELECT if(FALSE, named_struct('a', ''), NULL)");
     String targetSql =
