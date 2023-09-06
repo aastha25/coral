@@ -5,6 +5,7 @@
  */
 package com.linkedin.coral.spark;
 
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -163,7 +164,10 @@ public class CoralSpark {
     }
     String sparkSQL = constructSparkSQL(sparkSqlNode);
     List<String> baseTables = constructBaseTables(sparkRelNode);
-    return new CoralSpark(baseTables, ImmutableList.copyOf(sparkUDFInfos), sparkSQL, hmsClient, sparkSqlNode);
+    SqlNode modifiedSqlNode = sparkSqlNode.accept(new RenameTableShuttle(new HashSet<>(baseTables)));
+    String modifiedSparkSQL = constructSparkSQL(modifiedSqlNode);
+    return new CoralSpark(baseTables, ImmutableList.copyOf(sparkUDFInfos), modifiedSparkSQL, hmsClient,
+        modifiedSqlNode);
   }
 
   private static SqlNode constructSparkSqlNode(RelNode sparkRelNode, Set<SparkUDFInfo> sparkUDFInfos) {
