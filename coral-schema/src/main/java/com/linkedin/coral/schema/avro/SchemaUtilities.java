@@ -1,5 +1,5 @@
 /**
- * Copyright 2019-2023 LinkedIn Corporation. All rights reserved.
+ * Copyright 2019-2024 LinkedIn Corporation. All rights reserved.
  * Licensed under the BSD-2 Clause license.
  * See LICENSE in the project root for license information.
  */
@@ -211,12 +211,14 @@ class SchemaUtilities {
    * @param fieldAssembler
    */
   static void appendField(@Nonnull String fieldName, @Nonnull RelDataType fieldRelDataType, @Nullable String doc,
-      @Nonnull SchemaBuilder.FieldAssembler<Schema> fieldAssembler, boolean isNullable) {
+      @Nonnull SchemaBuilder.FieldAssembler<Schema> fieldAssembler, boolean isNullable,
+      boolean innerFieldNullableIfAny) {
     Preconditions.checkNotNull(fieldName);
     Preconditions.checkNotNull(fieldRelDataType);
     Preconditions.checkNotNull(fieldAssembler);
 
-    Schema fieldSchema = RelDataTypeToAvroType.relDataTypeToAvroTypeNonNullable(fieldRelDataType, fieldName);
+    Schema fieldSchema =
+        RelDataTypeToAvroType.relDataTypeToAvroTypeNonNullable(fieldRelDataType, fieldName, innerFieldNullableIfAny);
 
     // TODO: handle default value properly
     if (isNullable && fieldSchema.getType() != Schema.Type.NULL) {

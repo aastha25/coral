@@ -1,5 +1,5 @@
 /**
- * Copyright 2019-2023 LinkedIn Corporation. All rights reserved.
+ * Copyright 2019-2024 LinkedIn Corporation. All rights reserved.
  * Licensed under the BSD-2 Clause license.
  * See LICENSE in the project root for license information.
  */
@@ -315,7 +315,8 @@ public class RelToAvroSchemaConverter {
         String fieldName = SchemaUtilities.toAvroQualifiedName(aggCall.right);
         RelDataType fieldType = aggCall.left.getType();
         SchemaUtilities.appendField(fieldName, fieldType,
-            SchemaUtilities.generateDocumentationForAggregate(aggCall.left), logicalAggregateFieldAssembler, true);
+            SchemaUtilities.generateDocumentationForAggregate(aggCall.left), logicalAggregateFieldAssembler, true,
+            true);
       }
 
       schemaMap.put(logicalAggregate, logicalAggregateFieldAssembler.endRecord());
@@ -349,7 +350,7 @@ public class RelToAvroSchemaConverter {
             SchemaBuilder.record("LateralViews").namespace("LateralViews").fields();
 
         for (RelDataTypeField field : relNode.getRowType().getFieldList()) {
-          SchemaUtilities.appendField(field.getName(), field.getType(), null, hiveUncollectFieldAssembler, true);
+          SchemaUtilities.appendField(field.getName(), field.getType(), null, hiveUncollectFieldAssembler, true, true);
         }
 
         schemaMap.put(relNode, hiveUncollectFieldAssembler.endRecord());
@@ -425,7 +426,7 @@ public class RelToAvroSchemaConverter {
     public RexNode visitLiteral(RexLiteral rexLiteral) {
       RexNode rexNode = super.visitLiteral(rexLiteral);
       RelDataType fieldType = rexLiteral.getType();
-      appendField(fieldType, true, SchemaUtilities.generateDocumentationForLiteral(rexLiteral));
+      appendField(fieldType, true, true, SchemaUtilities.generateDocumentationForLiteral(rexLiteral));
 
       return rexNode;
     }
@@ -442,20 +443,26 @@ public class RelToAvroSchemaConverter {
        * and the corresponding input argument refers to a field from the input schema,
        * use the field's schema as is.
        */
-      if (rexCall.getOperator().getReturnTypeInference() instanceof OrdinalReturnTypeInferenceV2) {
-        int index = ((OrdinalReturnTypeInferenceV2) rexCall.getOperator().getReturnTypeInference()).getOrdinal();
-        RexNode operand = rexCall.operands.get(index);
-
-        if (operand instanceof RexInputRef) {
-          appendRexInputRefField((RexInputRef) operand);
-          return rexCall;
-        }
-      }
+      //      if (rexCall.getOperator().getReturnTypeInference() instanceof OrdinalReturnTypeInferenceV2) {
+      //        int index = ((OrdinalReturnTypeInferenceV2) rexCall.getOperator().getReturnTypeInference()).getOrdinal();
+      //        RexNode operand = rexCall.operands.get(index);
+      //
+      //        if (operand instanceof RexInputRef) {
+      //          appendRexInputRefField((RexInputRef) operand);
+      //          return rexCall;
+      //        }
+      //      }
 
       RelDataType fieldType = rexCall.getType();
-      boolean isNullable = SchemaUtilities.isFieldNullable(rexCall, inputSchema);
+      boolean isNullable = SchemaUtilities.isFieldNullable(rexCall, inputSchema); // false when op is certain name
+      boolean innerFieldNullableIfAny = true; // false when op is certain name
 
-      appendField(fieldType, isNullable,
+      if (rexCall.getOperator().getName().equalsIgnoreCase("li_groot_cast_nullability")) {
+        isNullable = false;
+        innerFieldNullableIfAny = false;
+      }
+
+      appendField(fieldType, isNullable, innerFieldNullableIfAny,
           SchemaUtilities.generateDocumentationForFunctionCall(rexCall, inputSchema, inputNode));
 
       return rexCall;
@@ -468,7 +475,7 @@ public class RelToAvroSchemaConverter {
        * Example RexOver:
        *  ROW_NUMBER() OVER (PARTITION BY colA, colB ORDER BY colC DESC)
        */
-      appendField(rexOver.getType(), false,
+      appendField(rexOver.getType(), false, true,
           SchemaUtilities.generateDocumentationForFunctionCall(rexOver, inputSchema, inputNode));
       return rexOver;
     }
@@ -504,7 +511,7 @@ public class RelToAvroSchemaConverter {
         RelDataType fieldType = rexFieldAccess.getType();
         boolean isNullable = SchemaUtilities.isFieldNullable((RexCall) referenceExpr, inputSchema);
         // TODO: add field documentation
-        SchemaUtilities.appendField(newFieldName, fieldType, null, fieldAssembler, isNullable);
+        SchemaUtilities.appendField(newFieldName, fieldType, null, fieldAssembler, isNullable, true);
       } else {
         Deque<String> innerRecordNames = new LinkedList<>();
         while (!(referenceExpr instanceof RexInputRef)) {
@@ -555,6 +562,21 @@ public class RelToAvroSchemaConverter {
       return super.visitPatternFieldRef(rexPatternFieldRef);
     }
 
+    private RexInputRef deriveSchema(RexCall rexCall) {
+      if (rexCall.getOperator().getReturnTypeInference() instanceof OrdinalReturnTypeInferenceV2) {
+        int index = ((OrdinalReturnTypeInferenceV2) rexCall.getOperator().getReturnTypeInference()).getOrdinal();
+        RexNode operand = rexCall.operands.get(index);
+
+        if (operand instanceof RexInputRef) {
+          return (RexInputRef) operand;
+        } else if (operand instanceof RexCall
+            && ((RexCall) operand).getOperator().getName().equalsIgnoreCase("li_groot_cast_nullability")) {
+          return deriveSchema((RexCall) operand);
+        }
+      }
+      return null;
+    }
+
     private void appendRexInputRefField(RexInputRef rexInputRef) {
       Schema.Field field = inputSchema.getFields().get(rexInputRef.getIndex());
       String oldFieldName = field.name();
@@ -564,9 +586,9 @@ public class RelToAvroSchemaConverter {
       SchemaUtilities.appendField(newFieldName, field, fieldAssembler);
     }
 
-    private void appendField(RelDataType fieldType, boolean isNullable, String doc) {
+    private void appendField(RelDataType fieldType, boolean isNullable, boolean innerFieldNullableIfAny, String doc) {
       String fieldName = SchemaUtilities.getFieldName("", suggestedFieldNames.poll());
-      SchemaUtilities.appendField(fieldName, fieldType, doc, fieldAssembler, isNullable);
+      SchemaUtilities.appendField(fieldName, fieldType, doc, fieldAssembler, isNullable, innerFieldNullableIfAny);
     }
 
     /**

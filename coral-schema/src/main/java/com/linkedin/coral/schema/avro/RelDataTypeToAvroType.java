@@ -1,5 +1,5 @@
 /**
- * Copyright 2019-2023 LinkedIn Corporation. All rights reserved.
+ * Copyright 2019-2024 LinkedIn Corporation. All rights reserved.
  * Licensed under the BSD-2 Clause license.
  * See LICENSE in the project root for license information.
  */
@@ -49,12 +49,14 @@ class RelDataTypeToAvroType {
    * @param relDataType
    * @return Schema of Avro data type corresponding to input RelDataType
    */
-  static Schema relDataTypeToAvroTypeNonNullable(@Nonnull RelDataType relDataType, String recordName) {
+  static Schema relDataTypeToAvroTypeNonNullable(@Nonnull RelDataType relDataType, String recordName,
+      boolean innerFieldNullableIfAny) {
     Preconditions.checkNotNull(relDataType);
 
     if (relDataType instanceof RelRecordType || relDataType instanceof DynamicRecordType) {
+      //      return relRecordTypeToAvroTypeNonNullable(relDataType, recordName, true);
       String uniqueNamespace = getUniqueNamespace(relDataType, recordName);
-      return relRecordTypeToAvroType(relDataType, null, recordName, uniqueNamespace, null);
+      return relRecordTypeToAvroType(relDataType, null, recordName, uniqueNamespace, innerFieldNullableIfAny, null);
     }
 
     if (relDataType instanceof BasicSqlType) {
@@ -62,7 +64,8 @@ class RelDataTypeToAvroType {
     }
 
     if (relDataType instanceof MultisetSqlType || relDataType instanceof ArraySqlType) {
-      return Schema.createArray(relDataTypeToAvroType(relDataType.getComponentType(), recordName));
+      return Schema
+          .createArray(relDataTypeToAvroType(relDataType.getComponentType(), recordName, innerFieldNullableIfAny));
     }
 
     if (relDataType instanceof MapSqlType) {
@@ -75,18 +78,22 @@ class RelDataTypeToAvroType {
         throw new UnsupportedOperationException(
             "Key of Map can only be a String: " + mapSqlType.getKeyType().getSqlTypeName().getName());
       }
-      return Schema.createMap(relDataTypeToAvroType(mapSqlType.getValueType(), recordName));
+      return Schema.createMap(relDataTypeToAvroType(mapSqlType.getValueType(), recordName, innerFieldNullableIfAny));
     }
 
     throw new UnsupportedOperationException(
         "Unsupported RelDataType to be converted to Avro type: " + relDataType.toString());
   }
 
-  private static Schema relDataTypeToAvroType(RelDataType relDataType, String recordName) {
-    final Schema avroSchema = relDataTypeToAvroTypeNonNullable(relDataType, recordName);
+  private static Schema relDataTypeToAvroType(RelDataType relDataType, String recordName,
+      boolean innerFieldNullableIfAny) {
+    final Schema avroSchema = relDataTypeToAvroTypeNonNullable(relDataType, recordName, innerFieldNullableIfAny);
     // TODO: Current logic ALWAYS sets the inner fields of RelDataType record nullable.
     //  Modify this to be applied only when RelDataType record was generated from a HIVE_UDF RexCall
-    return SchemaUtilities.makeNullable(avroSchema, false);
+    if (innerFieldNullableIfAny) {
+      return SchemaUtilities.makeNullable(avroSchema, false);
+    }
+    return avroSchema;
   }
 
   private static Schema basicSqlTypeToAvroType(BasicSqlType relDataType) {
@@ -140,7 +147,7 @@ class RelDataTypeToAvroType {
    * @return Avro type corresponding to RelDataType
    */
   private static Schema relRecordTypeToAvroType(RelDataType relRecord, List<String> fieldComments, String recordName,
-      String recordNamespace, String doc) {
+      String recordNamespace, boolean innerFieldNullableIfAny, String doc) {
     final List<Schema.Field> fields = new ArrayList<>();
     final Schema avroSchema = Schema.createRecord(recordName, doc, recordNamespace, false);
 
@@ -148,7 +155,8 @@ class RelDataTypeToAvroType {
       final String comment = fieldComments != null && fieldComments.size() > relField.getIndex()
           ? fieldComments.get(relField.getIndex()) : null;
       fields.add(AvroCompatibilityHelper.createSchemaField(toAvroQualifiedName(relField.getName()),
-          relDataTypeToAvroType(relField.getType(), toAvroQualifiedName(relField.getName())), comment, null));
+          relDataTypeToAvroType(relField.getType(), toAvroQualifiedName(relField.getName()), innerFieldNullableIfAny),
+          comment, null));
     }
 
     avroSchema.setFields(fields);
