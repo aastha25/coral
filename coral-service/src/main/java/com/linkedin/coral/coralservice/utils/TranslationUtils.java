@@ -1,5 +1,5 @@
 /**
- * Copyright 2022-2023 LinkedIn Corporation. All rights reserved.
+ * Copyright 2022-2024 LinkedIn Corporation. All rights reserved.
  * Licensed under the BSD-2 Clause license.
  * See LICENSE in the project root for license information.
  */
@@ -25,7 +25,7 @@ public class TranslationUtils {
 
   public static String translateHiveToTrino(String query) {
     RelNode relNode = new HiveToRelConverter(hiveMetastoreClient).convertSql(query);
-    return new RelToTrinoConverter().convert(relNode);
+    return new RelToTrinoConverter(hiveMetastoreClient).convert(relNode);
   }
 
   public static String translateHiveToSpark(String query) {

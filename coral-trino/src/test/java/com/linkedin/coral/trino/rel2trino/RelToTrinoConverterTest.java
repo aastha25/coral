@@ -1,5 +1,5 @@
 /**
- * Copyright 2017-2023 LinkedIn Corporation. All rights reserved.
+ * Copyright 2017-2024 LinkedIn Corporation. All rights reserved.
  * Licensed under the BSD-2 Clause license.
  * See LICENSE in the project root for license information.
  */
@@ -57,7 +57,7 @@ public class RelToTrinoConverterTest {
   }
 
   private String toTrinoSql(String sql) {
-    RelToTrinoConverter converter = new RelToTrinoConverter();
+    RelToTrinoConverter converter = TestUtils.getRelToTrinoConverter();
     return converter.convert(TestUtils.toRel(sql, config));
   }
 

@@ -1,5 +1,5 @@
 /**
- * Copyright 2021-2023 LinkedIn Corporation. All rights reserved.
+ * Copyright 2021-2024 LinkedIn Corporation. All rights reserved.
  * Licensed under the BSD-2 Clause license.
  * See LICENSE in the project root for license information.
  */
@@ -245,7 +245,7 @@ public class TrinoToRelConverterTest {
     RelNode relNode = trinoToRelConverter.convertSql(trinoSql);
     assertEquals(expectedRelString, relToStr(relNode));
 
-    RelToTrinoConverter relToTrinoConverter = new RelToTrinoConverter();
+    RelToTrinoConverter relToTrinoConverter = new RelToTrinoConverter(hiveMetastoreClient);
     // Convert rel node back to Sql
     String expandedSql = relToTrinoConverter.convert(relNode);
     assertEquals(expectedSql, expandedSql);

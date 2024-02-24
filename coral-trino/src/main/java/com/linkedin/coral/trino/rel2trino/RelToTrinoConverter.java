@@ -1,5 +1,5 @@
 /**
- * Copyright 2017-2023 LinkedIn Corporation. All rights reserved.
+ * Copyright 2017-2024 LinkedIn Corporation. All rights reserved.
  * Licensed under the BSD-2 Clause license.
  * See LICENSE in the project root for license information.
  */
@@ -35,6 +35,7 @@ import org.apache.calcite.sql.validate.SqlValidatorUtil;
 import org.apache.calcite.util.Util;
 
 import com.linkedin.coral.com.google.common.collect.ImmutableList;
+import com.linkedin.coral.common.HiveMetastoreClient;
 import com.linkedin.coral.common.functions.FunctionFieldReferenceOperator;
 import com.linkedin.coral.hive.hive2rel.rel.HiveUncollect;
 import com.linkedin.coral.trino.rel2trino.functions.TrinoArrayTransformFunction;
@@ -60,18 +61,30 @@ public class RelToTrinoConverter extends RelToSqlConverter {
    * For uses outside LinkedIn, just ignore this configuration.
    */
   private Map<String, Boolean> configs = new HashMap<>();
+  private HiveMetastoreClient _hiveMetastoreClient;
 
   /**
    * Creates a RelToTrinoConverter.
    */
-  public RelToTrinoConverter() {
+  /**
+   * Creates a RelToTrinoConverter.
+   * @param mscClient client interface used to interact with the Hive Metastore service.
+   */
+  public RelToTrinoConverter(HiveMetastoreClient mscClient) {
     super(TrinoSqlDialect.INSTANCE);
+    _hiveMetastoreClient = mscClient;
   }
 
-  public RelToTrinoConverter(Map<String, Boolean> configs) {
+  /**
+   * Creates a RelToTrinoConverter.
+   * @param mscClient client interface used to interact with the Hive Metastore service.
+   * @param configs configs
+   */
+  public RelToTrinoConverter(HiveMetastoreClient mscClient, Map<String, Boolean> configs) {
     super(TrinoSqlDialect.INSTANCE);
     checkNotNull(configs);
     this.configs = configs;
+    _hiveMetastoreClient = mscClient;
   }
 
   /**

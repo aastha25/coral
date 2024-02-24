@@ -1,5 +1,5 @@
 /**
- * Copyright 2017-2023 LinkedIn Corporation. All rights reserved.
+ * Copyright 2017-2024 LinkedIn Corporation. All rights reserved.
  * Licensed under the BSD-2 Clause license.
  * See LICENSE in the project root for license information.
  */
@@ -10,6 +10,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -370,6 +371,14 @@ public class TestUtils {
 
   public static RelNode convertView(String db, String view) {
     return new HiveToRelConverter(hiveMetastoreClient).convertView(db, view);
+  }
+
+  public static RelToTrinoConverter getRelToTrinoConverter() {
+    return new RelToTrinoConverter(hiveMetastoreClient);
+  }
+
+  public static RelToTrinoConverter getRelToTrinoConverter(Map<String, Boolean> configs) {
+    return new RelToTrinoConverter(hiveMetastoreClient, configs);
   }
 
   public static HiveConf loadResourceHiveConf() {

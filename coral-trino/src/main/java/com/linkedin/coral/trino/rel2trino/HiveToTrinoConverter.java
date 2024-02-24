@@ -1,5 +1,5 @@
 /**
- * Copyright 2017-2023 LinkedIn Corporation. All rights reserved.
+ * Copyright 2017-2024 LinkedIn Corporation. All rights reserved.
  * Licensed under the BSD-2 Clause license.
  * See LICENSE in the project root for license information.
  */
@@ -23,7 +23,7 @@ public class HiveToTrinoConverter {
   public static HiveToTrinoConverter create(HiveMetastoreClient mscClient) {
     checkNotNull(mscClient);
     HiveToRelConverter hiveToRelConverter = new HiveToRelConverter(mscClient);
-    RelToTrinoConverter relToTrinoConverter = new RelToTrinoConverter();
+    RelToTrinoConverter relToTrinoConverter = new RelToTrinoConverter(mscClient);
     return new HiveToTrinoConverter(hiveToRelConverter, relToTrinoConverter);
   }
 
@@ -31,7 +31,7 @@ public class HiveToTrinoConverter {
     checkNotNull(mscClient);
     checkNotNull(configs);
     HiveToRelConverter hiveToRelConverter = new HiveToRelConverter(mscClient);
-    RelToTrinoConverter relToTrinoConverter = new RelToTrinoConverter(configs);
+    RelToTrinoConverter relToTrinoConverter = new RelToTrinoConverter(mscClient, configs);
     return new HiveToTrinoConverter(hiveToRelConverter, relToTrinoConverter);
   }
 

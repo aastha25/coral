@@ -1,5 +1,5 @@
 /**
- * Copyright 2017-2023 LinkedIn Corporation. All rights reserved.
+ * Copyright 2017-2024 LinkedIn Corporation. All rights reserved.
  * Licensed under the BSD-2 Clause license.
  * See LICENSE in the project root for license information.
  */
@@ -26,7 +26,7 @@ import com.linkedin.coral.common.HiveMscAdapter;
 public class ToRelTestUtils {
   public static final String CORAL_FROM_TRINO_TEST_DIR = "coral.trino.test.dir";
 
-  private static HiveMscAdapter hiveMetastoreClient;
+  public static HiveMscAdapter hiveMetastoreClient;
   public static TrinoToRelConverter trinoToRelConverter;
 
   static void run(Driver driver, String sql) {
