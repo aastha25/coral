@@ -1,5 +1,5 @@
 /**
- * Copyright 2018-2023 LinkedIn Corporation. All rights reserved.
+ * Copyright 2018-2024 LinkedIn Corporation. All rights reserved.
  * Licensed under the BSD-2 Clause license.
  * See LICENSE in the project root for license information.
  */
@@ -18,6 +18,7 @@ import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.SqlSelect;
 
 import com.linkedin.coral.com.google.common.collect.ImmutableList;
+import com.linkedin.coral.common.HiveMetastoreClient;
 import com.linkedin.coral.spark.containers.SparkRelInfo;
 import com.linkedin.coral.spark.containers.SparkUDFInfo;
 import com.linkedin.coral.spark.dialect.SparkSqlDialect;
@@ -42,11 +43,21 @@ public class CoralSpark {
   private final List<String> baseTables;
   private final List<SparkUDFInfo> sparkUDFInfoList;
   private final String sparkSql;
+  private final HiveMetastoreClient hiveMetastoreClient;
 
   private CoralSpark(List<String> baseTables, List<SparkUDFInfo> sparkUDFInfoList, String sparkSql) {
     this.baseTables = baseTables;
     this.sparkUDFInfoList = sparkUDFInfoList;
     this.sparkSql = sparkSql;
+    this.hiveMetastoreClient = null;
+  }
+
+  private CoralSpark(List<String> baseTables, List<SparkUDFInfo> sparkUDFInfoList, String sparkSql,
+      HiveMetastoreClient hmsClient) {
+    this.baseTables = baseTables;
+    this.sparkUDFInfoList = sparkUDFInfoList;
+    this.sparkSql = sparkSql;
+    this.hiveMetastoreClient = hmsClient;
   }
 
   /**
@@ -72,6 +83,15 @@ public class CoralSpark {
     return new CoralSpark(baseTables, ImmutableList.copyOf(sparkUDFInfos), sparkSQL);
   }
 
+  public static CoralSpark create(RelNode irRelNode, HiveMetastoreClient hmsClient) {
+    SparkRelInfo sparkRelInfo = IRRelToSparkRelTransformer.transform(irRelNode);
+    Set<SparkUDFInfo> sparkUDFInfos = sparkRelInfo.getSparkUDFInfos();
+    RelNode sparkRelNode = sparkRelInfo.getSparkRelNode();
+    String sparkSQL = constructSparkSQL(sparkRelNode, sparkUDFInfos);
+    List<String> baseTables = constructBaseTables(sparkRelNode);
+    return new CoralSpark(baseTables, ImmutableList.copyOf(sparkUDFInfos), sparkSQL, hmsClient);
+  }
+
   /**
    * Users use this function as the main API for getting CoralSpark instance.
    * This should be used when user need to align the Coral-spark translated SQL
@@ -82,6 +102,11 @@ public class CoralSpark {
    * @return [[CoralSparkInfo]]
    */
   public static CoralSpark create(RelNode irRelNode, Schema schema) {
+    List<String> aliases = schema.getFields().stream().map(Schema.Field::name).collect(Collectors.toList());
+    return createWithAlias(irRelNode, aliases);
+  }
+
+  public static CoralSpark create(RelNode irRelNode, Schema schema, HiveMetastoreClient hmsClient) {
     List<String> aliases = schema.getFields().stream().map(Schema.Field::name).collect(Collectors.toList());
     return createWithAlias(irRelNode, aliases);
   }
