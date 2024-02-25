@@ -1,5 +1,5 @@
 /**
- * Copyright 2017-2023 LinkedIn Corporation. All rights reserved.
+ * Copyright 2017-2024 LinkedIn Corporation. All rights reserved.
  * Licensed under the BSD-2 Clause license.
  * See LICENSE in the project root for license information.
  */
@@ -53,6 +53,15 @@ public class TrinoSqlDialect extends SqlDialect {
       return name;
     }
     return IDENTIFIER_QUOTE_STRING + name + IDENTIFIER_QUOTE_STRING;
+  }
+
+  /**
+   * Override this method so that there will be explicit and correct table alias for selected fields, which is necessary for
+   * data type derivation on SqlNodes
+   */
+  @Override
+  public boolean hasImplicitTableAlias() {
+    return false;
   }
 
   @Override
