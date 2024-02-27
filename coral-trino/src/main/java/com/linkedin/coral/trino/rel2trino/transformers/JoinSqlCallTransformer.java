@@ -1,5 +1,5 @@
 /**
- * Copyright 2023 LinkedIn Corporation. All rights reserved.
+ * Copyright 2023-2024 LinkedIn Corporation. All rights reserved.
  * Licensed under the BSD-2 Clause license.
  * See LICENSE in the project root for license information.
  */
@@ -88,7 +88,10 @@ public class JoinSqlCallTransformer extends SqlCallTransformer {
         || (unnestOperand instanceof SqlCall
             && ((SqlCall) unnestOperand).getOperator().getName().equalsIgnoreCase("transform"))
         || (unnestOperand instanceof SqlCall
-            && ((SqlCall) unnestOperand).getOperator().getName().equalsIgnoreCase("if"))) {
+            && ((SqlCall) unnestOperand).getOperator().getName().equalsIgnoreCase("if"))
+        || (unnestOperand instanceof SqlCall
+            && ((SqlCall) unnestOperand).getOperator().getName().equalsIgnoreCase("split")
+            && ((SqlCall) unnestOperand).operand(0).getKind() == SqlKind.IDENTIFIER)) {
       return true;
     }
     // If the unnest SqlCall is uncorrelated with the SqlJoin, for example,
