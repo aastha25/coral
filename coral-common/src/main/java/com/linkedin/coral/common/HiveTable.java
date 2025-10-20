@@ -39,6 +39,8 @@ import org.apache.hadoop.hive.serde2.typeinfo.TypeInfoUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.linkedin.coral.common.catalog.HiveDataset;
+
 
 /**
  * Adaptor class from Hive {@link org.apache.hadoop.hive.metastore.api.Table} representation to
@@ -86,6 +88,15 @@ public class HiveTable implements ScannableTable {
   public HiveTable(org.apache.hadoop.hive.metastore.api.Table hiveTable) {
     Preconditions.checkNotNull(hiveTable);
     this.hiveTable = hiveTable;
+  }
+  
+  /**
+   * Constructor accepting HiveDataset for unified catalog integration.
+   * @param dataset HiveDataset from catalog
+   */
+  public HiveTable(HiveDataset dataset) {
+    Preconditions.checkNotNull(dataset);
+    this.hiveTable = dataset.getHiveTable();
   }
 
   /**
