@@ -39,7 +39,7 @@ import org.apache.hadoop.hive.serde2.typeinfo.TypeInfoUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.linkedin.coral.common.catalog.HiveDataset;
+import com.linkedin.coral.common.catalog.HiveCoralTable;
 
 
 /**
@@ -91,12 +91,12 @@ public class HiveTable implements ScannableTable {
   }
 
   /**
-   * Constructor accepting HiveDataset for unified catalog integration.
-   * @param dataset HiveDataset from catalog
+   * Constructor accepting HiveCoralTable for unified catalog integration.
+   * @param coralTable HiveCoralTable from catalog
    */
-  public HiveTable(HiveDataset dataset) {
-    Preconditions.checkNotNull(dataset);
-    this.hiveTable = dataset.getHiveTable();
+  public HiveTable(HiveCoralTable coralTable) {
+    Preconditions.checkNotNull(coralTable);
+    this.hiveTable = coralTable.getHiveTable();
   }
 
   /**
