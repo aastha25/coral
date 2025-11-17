@@ -10,6 +10,8 @@ import java.util.Map;
 
 import org.apache.iceberg.Table;
 
+import com.linkedin.coral.common.types.CoralDataType;
+
 import static com.google.common.base.Preconditions.*;
 
 
@@ -67,6 +69,11 @@ public class IcebergCoralTable implements CoralTable {
   @Override
   public TableType tableType() {
     return TableType.TABLE;
+  }
+
+  @Override
+  public CoralDataType getCoralSchema() {
+    throw new UnsupportedOperationException("getCoralSchema() not implemented yet for IcebergCoralTable");
   }
 
   /**

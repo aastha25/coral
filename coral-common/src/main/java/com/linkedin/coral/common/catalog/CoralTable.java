@@ -7,6 +7,8 @@ package com.linkedin.coral.common.catalog;
 
 import java.util.Map;
 
+import com.linkedin.coral.common.types.CoralDataType;
+
 
 /**
  * A unified abstraction representing a table or view in Coral.
@@ -40,4 +42,6 @@ public interface CoralTable {
    * @return TableType enum value
    */
   TableType tableType();
+
+  CoralDataType getCoralSchema();
 }
