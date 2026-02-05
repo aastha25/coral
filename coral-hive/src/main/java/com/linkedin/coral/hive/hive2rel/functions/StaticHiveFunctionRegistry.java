@@ -120,6 +120,9 @@ public class StaticHiveFunctionRegistry implements FunctionRegistry {
 
     // TODO: this should be arg1 or arg2 nullable
     createAddUserDefinedFunction("nvl", ARG0_NULLABLE, and(family(SqlTypeFamily.ANY, SqlTypeFamily.ANY), SAME_SAME));
+    
+    // Add TRY_CAST function for safe type casting
+    createAddUserDefinedFunction("try_cast", ARG0_NULLABLE, family(SqlTypeFamily.ANY));
 
     // calcite models 'if' function as CASE operator. We can use CASE but that will cause translation
     // to SQL to be odd although correct. So, we add 'if' as UDF
