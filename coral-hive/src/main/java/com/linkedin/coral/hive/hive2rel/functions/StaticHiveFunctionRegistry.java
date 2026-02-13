@@ -678,6 +678,9 @@ public class StaticHiveFunctionRegistry implements FunctionRegistry {
     createAddUserDefinedFunction("com.linkedin.policy.decoration.udfs.RedactSecondarySchemaFieldIf", ARG1, family(
         SqlTypeFamily.BOOLEAN, SqlTypeFamily.ANY, SqlTypeFamily.ARRAY, SqlTypeFamily.CHARACTER, SqlTypeFamily.ANY));
 
+    // Add TRY_CAST for safe type casting (Trino/Spark compatibility)
+    createAddUserDefinedFunction("try_cast", ARG0_NULLABLE, family(SqlTypeFamily.ANY));
+
     createAddUserDefinedFunction("com.linkedin.groot.runtime.udf.spark.HasMemberConsentUDF", ReturnTypes.BOOLEAN,
         family(SqlTypeFamily.STRING, SqlTypeFamily.ANY, SqlTypeFamily.TIMESTAMP));
     createAddUserDefinedFunction("com.linkedin.groot.runtime.udf.spark.RedactFieldIfUDF",

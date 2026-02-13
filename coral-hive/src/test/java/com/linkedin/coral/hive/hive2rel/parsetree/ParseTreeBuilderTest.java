@@ -248,4 +248,12 @@ public class ParseTreeBuilderTest {
     // Validate if the translation is successful
     assertEquals(sqlNode.toString().replaceAll("\\r?\\n", " "), table.getViewExpandedText());
   }
+
+  @Test
+  public void testTryCastFunction() {
+    HiveToRelConverter hiveToRelConverter = new HiveToRelConverter(msc);
+    String sql = "SELECT TRY_CAST(col AS INT) FROM t";
+    SqlNode sqlNode = hiveToRelConverter.toSqlNode(sql);
+    assertNotNull(sqlNode, "Failed to parse SQL: " + sql);
+  }
 }
